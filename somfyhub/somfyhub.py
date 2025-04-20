@@ -77,12 +77,12 @@ class ReqGetCovers(ReqBody):
         return b""
 
 
+@dataclass
 class ReqAddCover(ReqBody):
     """Body for adding cover"""
 
-    def __init__(self, name: str, rollingCode: int = 0) -> None:
-        self.name = name
-        self.rollingCode = rollingCode
+    name: str
+    rollingCode: int = 0
 
     def _toBytes(self):
         return (
@@ -92,11 +92,11 @@ class ReqAddCover(ReqBody):
         )
 
 
+@dataclass
 class ReqRenCover(ReqBody):
     """Body for renaming cover"""
 
-    def __init__(self, name: str) -> None:
-        self.name = name
+    name: str
 
     def _toBytes(self):
         return _toLittleEndianBytes(len(self.name) + 1, 1) + bytes(
@@ -104,13 +104,13 @@ class ReqRenCover(ReqBody):
         )
 
 
+@dataclass
 class ReqCustomCmd(ReqBody):
     """Body for custom command"""
 
-    def __init__(self, rollingCode: int, command: CMD, frameRepeat: int) -> None:
-        self.rollingCode = rollingCode
-        self.command = command
-        self.frameRepeat = frameRepeat
+    rollingCode: int
+    command: CMD
+    frameRepeat: int
 
     def _toBytes(self):
         return (
@@ -120,7 +120,7 @@ class ReqCustomCmd(ReqBody):
         )
 
 
-class SomfyApiCover:
+class SomfyCover:
     def __init__(
         self, api: "SomfyHub", name: str, remoteId: str, rollingCode: str
     ) -> None:
@@ -176,7 +176,7 @@ class SomfyHub:
         self, opcode: OP_CODE, remoteId: int, body: ReqBody
     ) -> Res[str]:
         """Send a request containing remoteId and body
-        returns a tuple(err: int, msg: str)
+        returns a Res[msg: str]
         err: the error-code, 0 = success, 1 = error, 2 unknown error
         msg: the response or error-message
         """
@@ -210,15 +210,15 @@ class SomfyHub:
             _LOGGER.error("Read error: %s", e)
             return Res(STATUS.ERROR, f"Read error: {e}")
 
-    async def getAllCovers(self) -> Res[list[SomfyApiCover]]:
+    async def getAllCovers(self) -> Res[list[SomfyCover]]:
         """Returns a list of SomfyApiCover's safed on the hub"""
         r = await self._sendRequestWithoutBody(OP_CODE.GET_COVERS)
         if r.status != STATUS.SUCCESS:
             return r
         if r.body is None:
-            return Res[list[SomfyApiCover]](STATUS.SUCCESS, [])
-        return Res[list[SomfyApiCover]](STATUS.SUCCESS, [
-            SomfyApiCover(self, *row.split(";")) for row in r.body.splitlines() if row
+            return Res[list[SomfyCover]](STATUS.SUCCESS, [])
+        return Res[list[SomfyCover]](STATUS.SUCCESS, [
+            SomfyCover(self, *row.split(";")) for row in r.body.splitlines() if row
         ])
 
     async def _sendCmd(self, remoteId: int, cmd: CMD) -> Res[str]:

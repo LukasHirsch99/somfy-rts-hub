@@ -7,19 +7,19 @@ PORT = 42069
 hub = somfyhub.SomfyHub(HOST, PORT)
 
 
-# @pytest.mark.asyncio
-# async def test_getAllCovers():
-#     r = await hub.getAllCovers()
-#     assert r.status == somfyhub.STATUS.SUCCESS
-#     print(", ".join(str(c) for c in r.body))
-
-
 @pytest.mark.asyncio
-async def test_addCover():
-    r = await hub.addCover("test_addCover", 2)
-    print(r.status)
-    print("Body: " + r.body)
+async def test_getAllCovers():
+    r = await hub.getAllCovers()
+    print(", ".join(str(c) for c in r.body))
     assert r.status == somfyhub.STATUS.SUCCESS
+
+
+# @pytest.mark.asyncio
+# async def test_addCover():
+#     r = await hub.addCover("test_addCover", 2)
+#     print(r.status)
+#     print("Body: " + r.body)
+#     assert r.status == somfyhub.STATUS.SUCCESS
 
 
 # @pytest.mark.asyncio

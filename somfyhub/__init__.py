@@ -1,1 +1,1 @@
-from somfyhub.somfyhub import SomfyHub, Res, SomfyApiCover, STATUS
+from somfyhub.somfyhub import SomfyHub, Res, SomfyCover, STATUS
