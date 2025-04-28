@@ -4,8 +4,8 @@ with open("README.md", "r") as f:
     long_description = f.read()
 
 setup(
-    name="somfy-rts-hub-LukasHirsch99",
-    version="0.0.1",
+    name="somfy-rts-hub",
+    version="0.0.2",
     author="Lukas Hirsch",
     author_email="lukas.stag@gmail.com",
     description="A small package to talk to somfy-rts-esp devices.",

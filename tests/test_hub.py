@@ -1,38 +1,15 @@
-import somfyhub
-import pytest
+import somfyrtshub
+from somfyrtshub.const import CMD
+from somfyrtshub.hub import ReqCoverCmd, ReqAddCover, ReqRenCover, ReqCustomCmd
 
 HOST = "10.0.0.99"
 PORT = 42069
 
-hub = somfyhub.SomfyHub(HOST, PORT)
+hub = somfyrtshub.Hub(HOST, PORT)
 
 
-@pytest.mark.asyncio
-async def test_getAllCovers():
-    r = await hub.getAllCovers()
-    print(", ".join(str(c) for c in r.body))
-    assert r.status == somfyhub.STATUS.SUCCESS
-
-
-# @pytest.mark.asyncio
-# async def test_addCover():
-#     r = await hub.addCover("test_addCover", 2)
-#     print(r.status)
-#     print("Body: " + r.body)
-#     assert r.status == somfyhub.STATUS.SUCCESS
-
-
-# @pytest.mark.asyncio
-# async def test_renameCover():
-#     r = await hub.renameCover(2, "test_renameCover")
-#     print(r.status)
-#     print(r.body)
-#     assert r.status == somfyhub.STATUS.SUCCESS
-#
-#
-# @pytest.mark.asyncio
-# async def test_removeCover():
-#     r = await hub.removeCover(2)
-#     print(r.status)
-#     print(r.body)
-#     assert r.status == somfyhub.STATUS.SUCCESS
+def test_toBytes():
+    assert ReqCoverCmd(12, CMD.UP)._toBytes() == b'\x0c\x00\x00\x00\x02'
+    assert ReqAddCover("Test1", 12)._toBytes() == b'\x0c\x00\x00\x00\x00\x00\x00\x00Test1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    assert ReqRenCover(12, "Renamed")._toBytes() == b'\x0c\x00\x00\x00Renamed\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    assert ReqCustomCmd(12, 10, CMD.UP, 5)._toBytes() == b'\x0c\x00\x00\x00\n\x00\x00\x00\x02\x05'
