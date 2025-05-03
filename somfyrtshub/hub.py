@@ -4,12 +4,9 @@ from asyncio import StreamReader, StreamWriter
 import logging
 from dataclasses import dataclass
 import struct
-from .const import ReqBody, CMD, OP_CODE, Res, RES_STATUS
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .cover import Cover
+from .const import ReqBody, CMD, OP_CODE
+from .cover import Cover
+from .errors import InvalidResponseException, InvalidOpcodeException
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +70,8 @@ class ReqCustomCmd(ReqBody):
 
 class Hub:
     """This class talks and configures the ESP remote."""
+    RES_HEADER_SIZE = 2
+    COVER_FMT = f"<II{MAX_NAME_LEN}s"
 
     def __init__(self, host: str, port: int) -> None:
         """Initialize the SomfyHub Object with it's host and port."""
@@ -83,114 +82,147 @@ class Hub:
 
     async def _connect(self) -> bool:
         _LOGGER.info("Connection to: %s:%s", self.host, self.port)
-        try:
-            self.reader, self.writer = await asyncio.open_connection(
-                self.host, self.port
-            )
-            return True
-        except Exception as e:
-            _LOGGER.error("Connection failed: %e", e)
-            return False
+        self.reader, self.writer = await asyncio.open_connection(
+            self.host, self.port
+        )
+
+    def _parseResHeader(self, r: bytes) -> tuple[int, int]:
+        return struct.unpack("<BB", r[:self.RES_HEADER_SIZE])
+
+    def _parseResCover(self, r: bytes) -> Cover:
+        remoteId, rc, name = struct.unpack(self.COVER_FMT, r)
+        return Cover(
+            self, name.split(b'\x00', 1)[0].decode('ascii'), remoteId, rc
+        )
 
     def _buildHeader(self, opcode: OP_CODE):
         return struct.pack("<HB", MAGIC_NUM, opcode.value)
 
     async def _sendRequest(
         self, opcode: OP_CODE, body: ReqBody = None
-    ) -> Res[str]:
-        """Send a request containing remoteId and body
-        returns a Res[msg: str]
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
+    ) -> tuple[int, bytes]:
+        """Send a request containing opcode and optional body to hub.
+        returns the status and optional body.
+        throws:
+        InvalidOpcodeException, when the response doesn't belong to the request
+        EmpytResponseException, when no response has been received
         """
         if self.writer is None or self.writer.is_closing():
-            if not await self._connect():
-                return Res(RES_STATUS.ERROR, "connection to hub failed")
+            await self._connect()
 
         data = self._buildHeader(opcode)
         if body:
             data += body._toBytes()
 
-        try:
-            self.writer.write(data)
-            await self.writer.drain()
-        except Exception as e:
-            _LOGGER.error("Write error: %s", e)
-            return Res(RES_STATUS.ERROR, f"Write error: {e}")
+        self.writer.write(data)
+        await self.writer.drain()
 
-        try:
-            rb = await self.reader.read(1024)
-            r = rb.decode("ascii")
-            if len(r) < 1:
-                return Res(RES_STATUS.ERROR, f"invalid response: '{r}'")
+        rb = await self.reader.read(1024)
+        if len(rb) < 1:
+            raise EmpytResponseException("ERROR: empty response")
 
-            return Res(RES_STATUS(int(r[0])), r[1:])
+        op, status = self._parseResHeader(rb)
 
-        except Exception as e:
-            _LOGGER.error("Read error: %s", e)
-            return Res(RES_STATUS.ERROR, f"Read error: {e}")
+        if op != opcode.value | 0x80:
+            raise InvalidOpcodeException(
+                f"ERROR: wrong opcode {hex(op)} expected: {hex(opcode.value | 0x80)}")
 
-    async def getAllCovers(self) -> Res[list[Cover]]:
-        """Returns a list of SomfyApiCover's safed on the hub"""
-        r = await self._sendRequest(OP_CODE.GET_COVERS)
-        if r.status != RES_STATUS.SUCCESS:
-            return r
-        if r.body is None:
-            return Res[list[Cover]](RES_STATUS.SUCCESS, [])
-        return Res[list[Cover]](RES_STATUS.SUCCESS, [
-            Cover(self, *row.split(";")) for row in r.body.splitlines() if row
-        ])
+        return status, rb[self.RES_HEADER_SIZE:]
 
-    async def _sendCmd(self, remoteId: int, cmd: CMD) -> Res[str]:
+    async def getAllCovers(self) -> list[Cover]:
+        """Returns a list of Cover's safed on the hub"""
+        status, body = await self._sendRequest(OP_CODE.GET_COVERS)
+
+        if status != 0:
+            raise Exception(f"ERROR: Unknown error, status: {status}")
+
+        count = body[0]
+        COVER_SIZE = struct.calcsize(self.COVER_FMT)
+
+        if len(body) != 1 + count * COVER_SIZE:
+            raise Exception(f"ERROR: invalid length {body}")
+
+        covers: list[Cover] = []
+        for i in range(1, len(body), COVER_SIZE):
+            chunk = body[i:i + COVER_SIZE]
+            if len(chunk) != COVER_SIZE:
+                break
+            covers.append(self._parseResCover(chunk))
+
+        return covers
+
+    async def _sendCmd(self, remoteId: int, cmd: CMD) -> None:
         """Send command to cover identified with remoteId.
-        returns Res[msg: str]
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
         """
-        return await self._sendRequest(OP_CODE.COVER_CMD, ReqCoverCmd(remoteId, cmd))
+        status, _ = await self._sendRequest(
+            OP_CODE.COVER_CMD, ReqCoverCmd(remoteId, cmd)
+        )
+        if status == 1:
+            raise Exception(f"ERROR: Cover with remoteId: {
+                            remoteId} not found")
+        if status == 2:
+            raise Exception(f"ERROR: Invalid command: {cmd} not found")
+        if status != 0:
+            raise Exception(f"ERROR: Unknown error, status: {status}")
 
     async def addCover(
         self, name: str, remoteId: int = 0, rollingCode: int = 0
-    ) -> Res[str]:
+    ) -> Cover:
         """Creates and stores a new cover on the hub.
         The hub broadcasts a 'PROG' command, and covers which are in PROG mode,
         will add the remote to their storage.
-        returns Res[msg: str]
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
         """
-        return await self._sendRequest(
+        status, body = await self._sendRequest(
             OP_CODE.ADD_COVER, ReqAddCover(name, remoteId, rollingCode)
         )
 
-    async def renameCover(self, remoteId: int, name: str) -> Res[str]:
-        """Renames a cover identified by remoteId and safes the name on the hub.
-        returns Res[msg: str]
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
-        """
-        return await self._sendRequest(OP_CODE.REN_COVER, ReqRenCover(remoteId, name))
+        if status == 1:
+            raise Exception(f"ERROR: Cover with name: {
+                            name} already exits")
+        if status == 2:
+            raise Exception(f"ERROR: Cover with remoteId: {
+                            remoteId} already exits")
+        if status == 3:
+            raise Exception("ERROR: No more cover space available")
+        if status != 0:
+            raise Exception(f"ERROR: Unknown error, status: {status}")
 
-    async def removeCover(self, remoteId: int) -> Res[str]:
-        """Removes a cover identified by remoteId from the hub.
+        return self._parseResCover(body)
+
+    async def renameCover(self, remoteId: int, name: str) -> None:
+        """Rename a cover identified by remoteId and safes the name on the hub.
+        """
+        status, _ = await self._sendRequest(OP_CODE.REN_COVER, ReqRenCover(remoteId, name))
+
+        if status == 1:
+            raise Exception(f"ERROR: Cover with remoteId: {
+                            remoteId} not found")
+        if status == 2:
+            raise Exception(
+                "ERROR: Failed to update name")
+        if status != 0:
+            raise Exception(f"ERROR: Unknown error, status: {status}")
+
+    async def removeCover(self, remoteId: int) -> None:
+        """Remove a cover identified by remoteId from the hub.
         The hub broadcasts a 'DEL' command, and covers which are in PROG mode,
         will remove the remote from their storage.
-        returns Res[msg: str]
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
         """
-        return await self._sendRequest(OP_CODE.COVER_CMD, ReqCoverCmd(remoteId, CMD.DEL))
+        await self._sendCmd(remoteId, CMD.DEL)
 
     async def customCommand(
         self, remoteId: int, rollingCode: int, command: CMD, frameRepeat: int
-    ) -> Res[str]:
-        """Hub sends a custom command specified by remoteId, rollingCode, command and frameRepeat.
+    ) -> None:
+        """Hub sends a custom command specified by remoteId, rollingCode,
+        command and frameRepeat.
+        remoteId: custom remoteId
+        rollingCode: custom rollingCode
         frameRepeat: how long the button is pressed
-        returns a tuple(err: int, msg: str)
-        err: the error-code, 0 = success, 1 = error, 2 unknown error
-        msg: the response or error-message
         """
-        return await self._sendRequest(
+        status, _ = await self._sendRequest(
             OP_CODE.CUSTOM_CMD,
             ReqCustomCmd(remoteId, rollingCode, command, frameRepeat),
         )
+
+        if status != 0:
+            raise Exception(f"ERROR: Unknown error, status: {status}")

@@ -1,22 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar, Generic
 from enum import Enum
-from dataclasses import dataclass
-
-
-class RES_STATUS(Enum):
-    SUCCESS = 0
-    ERROR = 1
-    UNKNOWN = 2
-
-
-T = TypeVar('T')
-
-
-@dataclass
-class Res(Generic[T]):
-    status: RES_STATUS
-    body: T
 
 
 class CMD(Enum):
