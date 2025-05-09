@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import struct
 from .const import ReqBody, CMD, OP_CODE
 from .cover import Cover
-from .errors import InvalidResponseException, InvalidOpcodeException
+import errors
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,12 +119,12 @@ class Hub:
 
         rb = await self.reader.read(1024)
         if len(rb) < 1:
-            raise EmpytResponseException("ERROR: empty response")
+            raise errors.EmpytResponseException("ERROR: empty response")
 
         op, status = self._parseResHeader(rb)
 
         if op != opcode.value | 0x80:
-            raise InvalidOpcodeException(
+            raise errors.InvalidOpcodeException(
                 f"ERROR: wrong opcode {hex(op)} expected: {hex(opcode.value | 0x80)}")
 
         return status, rb[self.RES_HEADER_SIZE:]
@@ -134,13 +134,13 @@ class Hub:
         status, body = await self._sendRequest(OP_CODE.GET_COVERS)
 
         if status != 0:
-            raise Exception(f"ERROR: Unknown error, status: {status}")
+            raise errors.InvalidStatusCodeException(f"ERROR: Unknown error, status: {status}")
 
         count = body[0]
         COVER_SIZE = struct.calcsize(self.COVER_FMT)
 
         if len(body) != 1 + count * COVER_SIZE:
-            raise Exception(f"ERROR: invalid length {body}")
+            raise errors.InvalidStatusCodeException(f"ERROR: invalid length {body}")
 
         covers: list[Cover] = []
         for i in range(1, len(body), COVER_SIZE):
@@ -158,12 +158,12 @@ class Hub:
             OP_CODE.COVER_CMD, ReqCoverCmd(remoteId, cmd)
         )
         if status == 1:
-            raise Exception(f"ERROR: Cover with remoteId: {
-                            remoteId} not found")
+            raise errors.CoverNotFoundException(f"ERROR: Cover with remoteId: {
+                remoteId} not found")
         if status == 2:
-            raise Exception(f"ERROR: Invalid command: {cmd} not found")
+            raise errors.InvalidCommandException(f"ERROR: Invalid command: {cmd} not found")
         if status != 0:
-            raise Exception(f"ERROR: Unknown error, status: {status}")
+            raise errors.InvalidStatusCodeException(f"ERROR: Unknown error, status: {status}")
 
     async def addCover(
         self, name: str, remoteId: int = 0, rollingCode: int = 0
@@ -177,15 +177,15 @@ class Hub:
         )
 
         if status == 1:
-            raise Exception(f"ERROR: Cover with name: {
+            raise errors.CoverAlreadyExistsException(f"ERROR: Cover with name: {
                             name} already exits")
         if status == 2:
-            raise Exception(f"ERROR: Cover with remoteId: {
+            raise errors.CoverAlreadyExistsException(f"ERROR: Cover with remoteId: {
                             remoteId} already exits")
         if status == 3:
-            raise Exception("ERROR: No more cover space available")
+            raise errors.NoMoreSpaceException("ERROR: No more cover space available")
         if status != 0:
-            raise Exception(f"ERROR: Unknown error, status: {status}")
+            raise errors.InvalidStatusCodeException(f"ERROR: Unknown error, status: {status}")
 
         return self._parseResCover(body)
 
@@ -195,13 +195,13 @@ class Hub:
         status, _ = await self._sendRequest(OP_CODE.REN_COVER, ReqRenCover(remoteId, name))
 
         if status == 1:
-            raise Exception(f"ERROR: Cover with remoteId: {
+            raise errors.CoverNotFoundException(f"ERROR: Cover with remoteId: {
                             remoteId} not found")
         if status == 2:
-            raise Exception(
+            raise errors.InternalHubException(
                 "ERROR: Failed to update name")
         if status != 0:
-            raise Exception(f"ERROR: Unknown error, status: {status}")
+            raise errors.InvalidStatusCodeException(f"ERROR: Unknown error, status: {status}")
 
     async def removeCover(self, remoteId: int) -> None:
         """Remove a cover identified by remoteId from the hub.
@@ -225,4 +225,4 @@ class Hub:
         )
 
         if status != 0:
-            raise Exception(f"ERROR: Unknown error, status: {status}")
+            raise errors.InvalidStatusCodeException(f"ERROR: Unknown error, status: {status}")
