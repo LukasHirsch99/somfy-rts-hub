@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import struct
 from .const import ReqBody, CMD, OP_CODE
 from .cover import Cover
-import errors
+# import errors
+from . import errors
 
 
 _LOGGER = logging.getLogger(__name__)

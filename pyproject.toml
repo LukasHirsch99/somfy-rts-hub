@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "somfy-rts-hub"
-version = "1.0"
+version = "1.1"
 authors = [
   { name="Lukas Hirsch", email="lukas.stag@gmail.com" },
 ]
